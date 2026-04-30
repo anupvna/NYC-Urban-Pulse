@@ -1,0 +1,153 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col, avg, count, sum as spark_sum, row_number, when, lit
+)
+from pyspark.sql.window import Window
+
+spark = SparkSession.builder \
+    .appName("NYC_Recommender_Person2") \
+    .config("spark.mongodb.output.uri", "mongodb://localhost:27017/nyc_urban_pulse") \
+    .getOrCreate()
+spark.sparkContext.setLogLevel("ERROR")
+
+# =============================================================
+# PATHS
+# =============================================================
+CLEANED_DATA_PATH = "hdfs:///user/avn2049_nyu_edu/data/cleaned/2025_full_year"
+FEATURE_PATH      = "hdfs:///user/avn2049_nyu_edu/data/features/zone_hour_features"
+RESULTS_PATH      = "hdfs:///user/avn2049_nyu_edu/data/model_results/"
+
+# =============================================================
+# 1. LOAD CLEANED TRIP DATA (need origin->destination pairs)
+# =============================================================
+print(">>> Loading cleaned taxi data for OD pairs...")
+taxi = spark.read.parquet(CLEANED_DATA_PATH)
+
+from pyspark.sql.functions import (
+    hour as spark_hour, date_format, unix_timestamp, from_unixtime
+)
+
+# Add time + weather features to trip-level data
+taxi = taxi.withColumn("pickup_hour", spark_hour(col("tpep_pickup_datetime")))
+
+# Round pickup to hour for weather join
+taxi = taxi.withColumn(
+    "pickup_hour_rounded",
+    from_unixtime(
+        (unix_timestamp(col("tpep_pickup_datetime")) / 3600).cast("long") * 3600
+    ).cast("timestamp")
+)
+
+# Load weather and join
+print(">>> Joining with weather for weather buckets...")
+weather = spark.read.parquet("hdfs:///user/avn2049_nyu_edu/data/weather/")
+weather = weather.withColumn(
+    "weather_hour",
+    from_unixtime(
+        (unix_timestamp(col("DATE")) / 3600).cast("long") * 3600
+    ).cast("timestamp")
+).select(
+    col("weather_hour"),
+    col("HourlyDryBulbTemperature").cast("double").alias("temperature"),
+    col("HourlyPrecipitation").cast("double").alias("precipitation")
+).dropDuplicates(["weather_hour"])
+
+taxi = taxi.join(weather, taxi.pickup_hour_rounded == weather.weather_hour, "left")
+taxi = taxi.fillna({"temperature": 55.0, "precipitation": 0.0})
+
+# Weather bucket
+taxi = taxi.withColumn(
+    "weather_bucket",
+    when(col("precipitation") > 0.1, "rainy")
+    .when(col("temperature") < 32, "cold")
+    .when(col("temperature") > 85, "hot")
+    .otherwise("clear")
+)
+
+# =============================================================
+# 2. COMPUTE EXPECTED YIELD PER ORIGIN-DESTINATION-HOUR-WEATHER
+# =============================================================
+print(">>> Computing origin-destination yield matrix...")
+
+od_yield = taxi.groupBy(
+    col("PULocationID").alias("origin_zone"),
+    col("DOLocationID").alias("dest_zone"),
+    "pickup_hour",
+    "weather_bucket"
+).agg(
+    avg("total_amount").alias("avg_revenue"),
+    count("*").alias("trip_count"),
+    avg("trip_distance").alias("avg_distance"),
+    avg(
+        col("total_amount") /
+        (
+            (unix_timestamp(col("tpep_dropoff_datetime")) - unix_timestamp(col("tpep_pickup_datetime"))) / 3600.0
+        )
+    ).alias("revenue_per_hour")
+)
+
+# Filter out low-sample routes (need at least 5 trips to be a reliable recommendation)
+od_yield = od_yield.filter(col("trip_count") >= 5)
+
+# =============================================================
+# 3. RANK TOP-K DESTINATIONS PER ORIGIN+HOUR+WEATHER
+# =============================================================
+print(">>> Ranking top 5 destinations per origin-hour-weather combo...")
+
+window = Window.partitionBy("origin_zone", "pickup_hour", "weather_bucket") \
+    .orderBy(col("revenue_per_hour").desc())
+
+top_k = od_yield.withColumn("rank", row_number().over(window)) \
+    .filter(col("rank") <= 5)
+
+top_k_count = top_k.count()
+print(f">>> Total recommendations: {top_k_count}")
+print(">>> Sample recommendations:")
+top_k.show(20, truncate=False)
+
+# =============================================================
+# 4. SAVE TO HDFS (intermediate, before MongoDB)
+# =============================================================
+reco_hdfs_path = "hdfs:///user/avn2049_nyu_edu/data/recommendations/top_k"
+top_k.write.mode("overwrite").parquet(reco_hdfs_path)
+print(f">>> Saved recommendations to {reco_hdfs_path}")
+
+# =============================================================
+# 5. WRITE TO MONGODB (for Person 3's dashboard)
+# =============================================================
+print(">>> Writing to MongoDB...")
+
+# --- Collection 1: zone_aggregates (from feature table)
+features = spark.read.parquet(FEATURE_PATH)
+features.write \
+    .format("mongo") \
+    .option("collection", "zone_aggregates") \
+    .mode("overwrite") \
+    .save()
+print(">>> zone_aggregates collection written.")
+
+# --- Collection 2: predictions (model results)
+try:
+    metrics = spark.read.parquet(RESULTS_PATH + "metrics")
+    metrics.write \
+        .format("mongo") \
+        .option("collection", "predictions") \
+        .mode("overwrite") \
+        .save()
+    print(">>> predictions collection written.")
+except Exception as e:
+    print(f">>> Warning: Could not write predictions — {e}")
+
+# --- Collection 3: recommendations (top-K)
+top_k.write \
+    .format("mongo") \
+    .option("collection", "recommendations") \
+    .mode("overwrite") \
+    .save()
+print(">>> recommendations collection written.")
+
+print("\n" + "=" * 50)
+print("  RECOMMENDER PIPELINE COMPLETE")
+print("=" * 50)
+
+spark.stop()
