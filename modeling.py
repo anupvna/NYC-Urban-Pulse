@@ -34,14 +34,12 @@ print(">>> Preparing features...")
 # Index the Borough column (categorical -> numeric)
 borough_indexer = StringIndexer(inputCol="Borough", outputCol="borough_idx", handleInvalid="keep")
 zone_indexer = StringIndexer(inputCol="Zone", outputCol="zone_idx", handleInvalid="keep")
-weather_indexer = StringIndexer(inputCol="weather_bucket", outputCol="weather_idx", handleInvalid="keep")
 
 feature_columns = [
     "PULocationID", "pickup_hour", "pickup_dow", "pickup_month",
     "is_weekend", "is_holiday",
-    "temperature", "precipitation", "wind_speed",
     "total_trips", "avg_distance", "avg_duration_min",
-    "borough_idx", "zone_idx", "weather_idx"
+    "borough_idx", "zone_idx"
 ]
 
 assembler = VectorAssembler(inputCols=feature_columns, outputCol="features", handleInvalid="skip")
@@ -65,7 +63,7 @@ print(f">>> Train: {train_data.count()}, Test: {test_data.count()}")
 print(">>> Training Linear Regression...")
 
 lr = LinearRegression(featuresCol="features", labelCol=TARGET, maxIter=100)
-lr_pipeline = Pipeline(stages=[borough_indexer, zone_indexer, weather_indexer, assembler, lr])
+lr_pipeline = Pipeline(stages=[borough_indexer, zone_indexer, assembler, lr])
 
 lr_paramGrid = ParamGridBuilder() \
     .addGrid(lr.regParam, [0.01, 0.1]) \
@@ -97,7 +95,7 @@ print(f">>> Linear Regression — RMSE: {lr_rmse:.4f}, MAE: {lr_mae:.4f}")
 print(">>> Training Gradient Boosted Trees...")
 
 gbt = GBTRegressor(featuresCol="features", labelCol=TARGET, maxIter=100, seed=42)
-gbt_pipeline = Pipeline(stages=[borough_indexer, zone_indexer, weather_indexer, assembler, gbt])
+gbt_pipeline = Pipeline(stages=[borough_indexer, zone_indexer, assembler, gbt])
 
 gbt_paramGrid = ParamGridBuilder() \
     .addGrid(gbt.maxDepth, [5, 8]) \

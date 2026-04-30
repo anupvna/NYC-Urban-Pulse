@@ -51,16 +51,12 @@ feature_importances = {
     "pickup_month": 0.0,
     "is_weekend": 0.0,
     "is_holiday": 0.0,
-    "temperature": 0.0,
-    "precipitation": 0.0,
-    "wind_speed": 0.0,
     "total_trips": 0.0,
     "avg_distance": 0.0,
     "avg_duration_min": 0.0,
     "PULocationID": 0.0,
     "borough_idx": 0.0,
     "zone_idx": 0.0,
-    "weather_idx": 0.0,
 }
 
 # Sort by importance

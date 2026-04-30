@@ -50,9 +50,6 @@ taxi = taxi.withColumn(
     (unix_timestamp(col("tpep_dropoff_datetime")) - unix_timestamp(col("tpep_pickup_datetime"))) / 60.0
 ).filter(col("trip_duration_min") > 0)
 
-# Fill any nulls in weather columns with defaults
-taxi = taxi.fillna({"temperature": 55.0, "precipitation": 0.0, "wind_speed": 5.0})
-
 # =============================================================
 # 3. ZONE-HOUR AGGREGATIONS
 # =============================================================
@@ -61,8 +58,7 @@ print(">>> Building zone-hour aggregations...")
 zone_hour_features = taxi.groupBy(
     "PULocationID", "Borough", "Zone",
     "pickup_date", "pickup_hour", "pickup_dow", "pickup_month",
-    "is_weekend", "is_holiday",
-    "temperature", "precipitation", "wind_speed"
+    "is_weekend", "is_holiday"
 ).agg(
     count("*").alias("total_trips"),
     spark_sum("total_amount").alias("total_revenue"),
@@ -76,16 +72,7 @@ zone_hour_features = taxi.groupBy(
 # Demand-to-supply ratio (trips per unique hour — higher means busier zone)
 zone_hour_features = zone_hour_features.withColumn(
     "demand_supply_ratio",
-    col("total_trips") / lit(1)  # per zone-hour, this is the raw demand count
-)
-
-# Weather buckets for recommender (Person 3 needs these)
-zone_hour_features = zone_hour_features.withColumn(
-    "weather_bucket",
-    when(col("precipitation") > 0.1, "rainy")
-    .when(col("temperature") < 32, "cold")
-    .when(col("temperature") > 85, "hot")
-    .otherwise("clear")
+    col("total_trips") / lit(1)
 )
 
 # =============================================================

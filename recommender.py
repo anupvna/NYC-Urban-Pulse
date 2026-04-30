@@ -28,26 +28,16 @@ from pyspark.sql.functions import (
 )
 
 taxi = taxi.withColumn("pickup_hour", spark_hour(col("tpep_pickup_datetime")))
-taxi = taxi.fillna({"temperature": 55.0, "precipitation": 0.0})
-
-taxi = taxi.withColumn(
-    "weather_bucket",
-    when(col("precipitation") > 0.1, "rainy")
-    .when(col("temperature") < 32, "cold")
-    .when(col("temperature") > 85, "hot")
-    .otherwise("clear")
-)
 
 # =============================================================
-# 2. COMPUTE EXPECTED YIELD PER ORIGIN-DESTINATION-HOUR-WEATHER
+# 2. COMPUTE EXPECTED YIELD PER ORIGIN-DESTINATION-HOUR
 # =============================================================
 print(">>> Computing origin-destination yield matrix...")
 
 od_yield = taxi.groupBy(
     col("PULocationID").alias("origin_zone"),
     col("DOLocationID").alias("dest_zone"),
-    "pickup_hour",
-    "weather_bucket"
+    "pickup_hour"
 ).agg(
     avg("total_amount").alias("avg_revenue"),
     count("*").alias("trip_count"),
@@ -64,11 +54,11 @@ od_yield = taxi.groupBy(
 od_yield = od_yield.filter(col("trip_count") >= 5)
 
 # =============================================================
-# 3. RANK TOP-K DESTINATIONS PER ORIGIN+HOUR+WEATHER
+# 3. RANK TOP-K DESTINATIONS PER ORIGIN+HOUR
 # =============================================================
-print(">>> Ranking top 5 destinations per origin-hour-weather combo...")
+print(">>> Ranking top 5 destinations per origin-hour combo...")
 
-window = Window.partitionBy("origin_zone", "pickup_hour", "weather_bucket") \
+window = Window.partitionBy("origin_zone", "pickup_hour") \
     .orderBy(col("revenue_per_hour").desc())
 
 top_k = od_yield.withColumn("rank", row_number().over(window)) \
