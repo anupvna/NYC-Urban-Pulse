@@ -13,9 +13,9 @@ spark.sparkContext.setLogLevel("ERROR")
 # =============================================================
 # PATHS
 # =============================================================
-CLEANED_DATA_PATH = "hdfs:///user/avn2049_nyu_edu/data/cleaned/2025_full_year"
-FEATURE_PATH      = "hdfs:///user/avn2049_nyu_edu/data/features/zone_hour_features"
-RESULTS_PATH      = "hdfs:///user/avn2049_nyu_edu/data/model_results/"
+CLEANED_DATA_PATH = "hdfs:///user/kk6064_nyu_edu/data/taxi_copy"
+FEATURE_PATH      = "hdfs:///user/kk6064_nyu_edu/data/features/zone_hour_features"
+RESULTS_PATH      = "hdfs:///user/kk6064_nyu_edu/data/model_results/"
 
 # =============================================================
 # 1. LOAD CLEANED TRIP DATA (need origin->destination pairs)
@@ -24,38 +24,12 @@ print(">>> Loading cleaned taxi data for OD pairs...")
 taxi = spark.read.parquet(CLEANED_DATA_PATH)
 
 from pyspark.sql.functions import (
-    hour as spark_hour, date_format, unix_timestamp, from_unixtime
+    hour as spark_hour, unix_timestamp
 )
 
-# Add time + weather features to trip-level data
 taxi = taxi.withColumn("pickup_hour", spark_hour(col("tpep_pickup_datetime")))
-
-# Round pickup to hour for weather join
-taxi = taxi.withColumn(
-    "pickup_hour_rounded",
-    from_unixtime(
-        (unix_timestamp(col("tpep_pickup_datetime")) / 3600).cast("long") * 3600
-    ).cast("timestamp")
-)
-
-# Load weather and join
-print(">>> Joining with weather for weather buckets...")
-weather = spark.read.parquet("hdfs:///user/avn2049_nyu_edu/data/weather/")
-weather = weather.withColumn(
-    "weather_hour",
-    from_unixtime(
-        (unix_timestamp(col("DATE")) / 3600).cast("long") * 3600
-    ).cast("timestamp")
-).select(
-    col("weather_hour"),
-    col("HourlyDryBulbTemperature").cast("double").alias("temperature"),
-    col("HourlyPrecipitation").cast("double").alias("precipitation")
-).dropDuplicates(["weather_hour"])
-
-taxi = taxi.join(weather, taxi.pickup_hour_rounded == weather.weather_hour, "left")
 taxi = taxi.fillna({"temperature": 55.0, "precipitation": 0.0})
 
-# Weather bucket
 taxi = taxi.withColumn(
     "weather_bucket",
     when(col("precipitation") > 0.1, "rainy")
@@ -108,7 +82,7 @@ top_k.show(20, truncate=False)
 # =============================================================
 # 4. SAVE TO HDFS (intermediate, before MongoDB)
 # =============================================================
-reco_hdfs_path = "hdfs:///user/avn2049_nyu_edu/data/recommendations/top_k"
+reco_hdfs_path = "hdfs:///user/kk6064_nyu_edu/data/recommendations/top_k"
 top_k.write.mode("overwrite").parquet(reco_hdfs_path)
 print(f">>> Saved recommendations to {reco_hdfs_path}")
 

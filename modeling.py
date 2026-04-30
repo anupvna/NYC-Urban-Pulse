@@ -15,9 +15,9 @@ spark.sparkContext.setLogLevel("ERROR")
 # =============================================================
 # PATHS
 # =============================================================
-FEATURE_PATH = "hdfs:///user/avn2049_nyu_edu/data/features/zone_hour_features"
-MODEL_OUTPUT  = "hdfs:///user/avn2049_nyu_edu/data/models/"
-RESULTS_PATH  = "hdfs:///user/avn2049_nyu_edu/data/model_results/"
+FEATURE_PATH = "hdfs:///user/kk6064_nyu_edu/data/features/zone_hour_features"
+MODEL_OUTPUT  = "hdfs:///user/kk6064_nyu_edu/data/models/"
+RESULTS_PATH  = "hdfs:///user/kk6064_nyu_edu/data/model_results/"
 
 # =============================================================
 # 1. LOAD FEATURE TABLE

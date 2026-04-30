@@ -3,7 +3,7 @@ Run this AFTER modeling.py to generate charts for the final report.
 Can run locally (not on Spark) — just needs the residuals CSV exported from HDFS.
 
 Usage on cluster:
-  1. Export residuals: hdfs dfs -get /user/avn2049_nyu_edu/data/model_results/residuals ./residuals_parquet
+  1. Export residuals: hdfs dfs -get /user/kk6064_nyu_edu/data/model_results/residuals ./residuals_parquet
   2. Run: python plot_results.py
 """
 import pandas as pd

@@ -15,9 +15,8 @@ spark.sparkContext.setLogLevel("ERROR")
 # =============================================================
 # PATHS — adjust these if Anoop used different locations
 # =============================================================
-CLEANED_DATA_PATH = "hdfs:///user/avn2049_nyu_edu/data/cleaned/2025_full_year"
-WEATHER_DATA_PATH = "hdfs:///user/avn2049_nyu_edu/data/weather/"
-OUTPUT_PATH       = "hdfs:///user/avn2049_nyu_edu/data/features/zone_hour_features"
+CLEANED_DATA_PATH = "hdfs:///user/kk6064_nyu_edu/data/taxi_copy"
+OUTPUT_PATH       = "hdfs:///user/kk6064_nyu_edu/data/features/zone_hour_features"
 
 # =============================================================
 # 1. LOAD CLEANED TAXI DATA
@@ -45,53 +44,17 @@ taxi = taxi.withColumn("pickup_hour", hour(col("tpep_pickup_datetime"))) \
     .withColumn("is_weekend", when(dayofweek(col("tpep_pickup_datetime")).isin(1, 7), 1).otherwise(0)) \
     .withColumn("is_holiday", when(date_format(col("tpep_pickup_datetime"), "yyyy-MM-dd").isin(US_HOLIDAYS_2025), 1).otherwise(0))
 
-# Round pickup time to the nearest hour for weather join
-taxi = taxi.withColumn(
-    "pickup_hour_rounded",
-    from_unixtime(
-        (unix_timestamp(col("tpep_pickup_datetime")) / 3600).cast("long") * 3600
-    ).cast("timestamp")
-)
-
 # Trip duration in minutes
 taxi = taxi.withColumn(
     "trip_duration_min",
     (unix_timestamp(col("tpep_dropoff_datetime")) - unix_timestamp(col("tpep_pickup_datetime"))) / 60.0
 ).filter(col("trip_duration_min") > 0)
 
-# =============================================================
-# 3. LOAD AND JOIN WEATHER DATA
-# =============================================================
-print(">>> Loading NOAA weather data...")
-weather = spark.read.parquet(WEATHER_DATA_PATH)
-print(">>> Weather schema:")
-weather.printSchema()
-
-# Rename weather columns to avoid ambiguity after join
-# Adjust these column names based on actual NOAA schema
-weather = weather.withColumn(
-    "weather_hour",
-    from_unixtime(
-        (unix_timestamp(col("DATE")) / 3600).cast("long") * 3600
-    ).cast("timestamp")
-).select(
-    col("weather_hour"),
-    col("HourlyDryBulbTemperature").alias("temperature").cast(DoubleType()),
-    col("HourlyPrecipitation").alias("precipitation").cast(DoubleType()),
-    col("HourlyWindSpeed").alias("wind_speed").cast(DoubleType())
-).dropDuplicates(["weather_hour"])
-
-# Fill nulls in weather with 0 (no rain/wind) or reasonable defaults
-weather = weather.fillna({"temperature": 55.0, "precipitation": 0.0, "wind_speed": 5.0})
-
-print(">>> Joining taxi data with weather...")
-taxi = taxi.join(weather, taxi.pickup_hour_rounded == weather.weather_hour, "left")
-
-# Fill any remaining nulls from unmatched weather rows
+# Fill any nulls in weather columns with defaults
 taxi = taxi.fillna({"temperature": 55.0, "precipitation": 0.0, "wind_speed": 5.0})
 
 # =============================================================
-# 4. ZONE-HOUR AGGREGATIONS
+# 3. ZONE-HOUR AGGREGATIONS
 # =============================================================
 print(">>> Building zone-hour aggregations...")
 
@@ -126,7 +89,7 @@ zone_hour_features = zone_hour_features.withColumn(
 )
 
 # =============================================================
-# 5. SAVE FEATURE TABLE
+# 4. SAVE FEATURE TABLE
 # =============================================================
 print(f">>> Feature table row count: {zone_hour_features.count()}")
 print(">>> Sample rows:")
