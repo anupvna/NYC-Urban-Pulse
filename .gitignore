@@ -32,6 +32,14 @@ derby.log
 spark-warehouse/
 
 # Data files (too large for git)
-*.parquet
 *.csv
 data/
+
+# Allow output parquet directories and plots
+!metrics_parquet/
+!residuals_parquet/
+!features_parquet/
+!recommendations_parquet/
+!model_lr_best/
+!model_gbt_best/
+!plots/
