@@ -94,7 +94,7 @@ print(f">>> Linear Regression — RMSE: {lr_rmse:.4f}, MAE: {lr_mae:.4f}")
 # =============================================================
 print(">>> Training Gradient Boosted Trees...")
 
-gbt = GBTRegressor(featuresCol="features", labelCol=TARGET, maxIter=30, seed=42)
+gbt = GBTRegressor(featuresCol="features", labelCol=TARGET, maxIter=30, maxBins=300, seed=42)
 gbt_pipeline = Pipeline(stages=[borough_indexer, zone_indexer, assembler, gbt])
 
 gbt_paramGrid = ParamGridBuilder() \
