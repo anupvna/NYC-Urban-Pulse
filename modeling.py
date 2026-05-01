@@ -76,7 +76,7 @@ lr_cv = CrossValidator(
     estimator=lr_pipeline,
     estimatorParamMaps=lr_paramGrid,
     evaluator=lr_evaluator,
-    numFolds=5,
+    numFolds=3,
     seed=42
 )
 
@@ -94,7 +94,7 @@ print(f">>> Linear Regression — RMSE: {lr_rmse:.4f}, MAE: {lr_mae:.4f}")
 # =============================================================
 print(">>> Training Gradient Boosted Trees...")
 
-gbt = GBTRegressor(featuresCol="features", labelCol=TARGET, maxIter=100, seed=42)
+gbt = GBTRegressor(featuresCol="features", labelCol=TARGET, maxIter=30, seed=42)
 gbt_pipeline = Pipeline(stages=[borough_indexer, zone_indexer, assembler, gbt])
 
 gbt_paramGrid = ParamGridBuilder() \
@@ -106,7 +106,7 @@ gbt_cv = CrossValidator(
     estimator=gbt_pipeline,
     estimatorParamMaps=gbt_paramGrid,
     evaluator=lr_evaluator,
-    numFolds=5,
+    numFolds=3,
     seed=42
 )
 
