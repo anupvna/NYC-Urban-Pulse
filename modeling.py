@@ -4,7 +4,7 @@ from pyspark.ml.regression import LinearRegression, GBTRegressor
 from pyspark.ml.evaluation import RegressionEvaluator
 from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
 from pyspark.ml import Pipeline
-from pyspark.sql.functions import col, abs as spark_abs
+from pyspark.sql.functions import col, abs as spark_abs, lit
 import json
 
 spark = SparkSession.builder \
