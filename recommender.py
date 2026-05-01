@@ -6,7 +6,6 @@ from pyspark.sql.window import Window
 
 spark = SparkSession.builder \
     .appName("NYC_Recommender_Person2") \
-    .config("spark.mongodb.output.uri", "mongodb://localhost:27017/nyc_urban_pulse") \
     .getOrCreate()
 spark.sparkContext.setLogLevel("ERROR")
 
@@ -77,38 +76,13 @@ top_k.write.mode("overwrite").parquet(reco_hdfs_path)
 print(f">>> Saved recommendations to {reco_hdfs_path}")
 
 # =============================================================
-# 5. WRITE TO MONGODB (for Person 3's dashboard)
+# 5. MONGODB WRITES — handled by Person 3 (dashboard)
 # =============================================================
-print(">>> Writing to MongoDB...")
-
-# --- Collection 1: zone_aggregates (from feature table)
-features = spark.read.parquet(FEATURE_PATH)
-features.write \
-    .format("mongo") \
-    .option("collection", "zone_aggregates") \
-    .mode("overwrite") \
-    .save()
-print(">>> zone_aggregates collection written.")
-
-# --- Collection 2: predictions (model results)
-try:
-    metrics = spark.read.parquet(RESULTS_PATH + "metrics")
-    metrics.write \
-        .format("mongo") \
-        .option("collection", "predictions") \
-        .mode("overwrite") \
-        .save()
-    print(">>> predictions collection written.")
-except Exception as e:
-    print(f">>> Warning: Could not write predictions — {e}")
-
-# --- Collection 3: recommendations (top-K)
-top_k.write \
-    .format("mongo") \
-    .option("collection", "recommendations") \
-    .mode("overwrite") \
-    .save()
-print(">>> recommendations collection written.")
+# Person 3 will read the HDFS parquet outputs and load into MongoDB
+# for the dashboard. Data locations:
+#   - Recommendations: hdfs:///user/kk6064_nyu_edu/data/recommendations/top_k
+#   - Features:        hdfs:///user/kk6064_nyu_edu/data/features/zone_hour_features
+#   - Model results:   hdfs:///user/kk6064_nyu_edu/data/model_results/
 
 print("\n" + "=" * 50)
 print("  RECOMMENDER PIPELINE COMPLETE")
