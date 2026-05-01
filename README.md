@@ -34,25 +34,25 @@ The raw dataset contained nearly 49 million rows. A PySpark cleaning pipeline wa
 ## Phase 2: Analytics & Machine Learning
 
 ### Feature Engineering (`feature_engineering.py`)
-Built zone-hour level aggregations from the cleaned 44.7M trip records using PySpark:
+Built zone-hour level aggregations from the cleaned 44.7M trip records using PySpark (resulting in 1.37M zone-hour-date rows):
 - **Aggregations:** Total trips, total revenue, average fare, average duration, average distance, and demand-to-supply ratio per zone per hour.
 - **Time Features:** Hour of day, day of week, month, weekend flag, and US holiday flag.
-- **Weather Integration:** Joined with NOAA hourly weather data (temperature, precipitation, wind speed) and categorized into weather buckets (clear, rainy, cold, hot).
-- **Output:** Feature table saved to HDFS at `/user/avn2049_nyu_edu/data/features/zone_hour_features`
+- **Output:** Feature table saved to HDFS at `/user/kk6064_nyu_edu/data/features/zone_hour_features`
 
 ### Predictive Modeling (`modeling.py`)
 Trained two fare prediction models using Spark MLlib on the feature table:
-- **Linear Regression:** Baseline model with regularization tuning via 5-fold cross-validation.
-- **Gradient Boosted Trees (GBTRegressor):** Advanced model with hyperparameter tuning (max depth, step size) via 5-fold cross-validation.
-- **Evaluation:** 80/20 train/test split. Both models evaluated on RMSE and MAE.
-- **Outputs:** Feature importance chart (GBT), residual plots for both models, and saved model artifacts.
+- **Linear Regression:** Baseline model with regularization tuning via 3-fold cross-validation.
+- **Gradient Boosted Trees (GBTRegressor):** Advanced model with hyperparameter tuning (max depth, step size) via 3-fold cross-validation (30 iterations, maxBins=300).
+- **Evaluation:** 80/20 train/test split. Both models evaluated on RMSE and MAE. GBT outperforms LR (RMSE 8.10 vs 12.88, MAE 3.97 vs 7.92).
+- **Top Feature:** `avg_distance` (43.7%) is the strongest predictor, followed by zone (30.7%) and trip duration (13.3%).
+- **Outputs:** Feature importance chart (GBT), residual plots, actual vs predicted plots, residual distribution, model comparison chart, and saved model artifacts.
 
 ### Top-K Destination Recommender (`recommender.py`)
-Batch recommender system to answer: *"I'm a taxi driver in Zone X at hour H in weather Y — where should I go?"*
-- Computes expected hourly revenue for every origin-destination-hour-weather combination.
+Batch recommender system to answer: *"I'm a taxi driver in Zone X at hour H — where should I go?"*
+- Computes expected hourly revenue for every origin-destination-hour combination.
 - Filters low-sample routes (minimum 5 trips) for reliability.
-- Ranks and stores the **Top 5 highest-yield destinations** per (origin_zone, hour, weather_bucket).
-- Results written to **MongoDB** collections (`zone_aggregates`, `predictions`, `recommendations`) for Phase 3 dashboard.
+- Ranks and stores the **Top 5 highest-yield destinations** per (origin_zone, hour).
+- Results saved to HDFS as parquet at `/user/kk6064_nyu_edu/data/recommendations/top_k`.
 
 ### Visualization (`plot_results.py`)
 Generates report-ready charts from model outputs:
