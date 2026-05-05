@@ -13,6 +13,7 @@ Run:
     python3 mongo_loader.py
 """
 
+import os
 import pandas as pd
 from pymongo import MongoClient, ASCENDING
 from pymongo.errors import BulkWriteError
@@ -24,10 +25,11 @@ import time
 MONGO_URI   = "mongodb://localhost:27017"
 DB_NAME     = "nyc_urban_pulse"
 
-FEATURES_DIR       = "./features_parquet"
-RESIDUALS_DIR      = "./residuals_parquet"
-METRICS_DIR        = "./metrics_parquet"
-RECOMMENDATIONS_DIR = "./recommendations_parquet"
+FEATURES_DIR         = "./features_parquet"
+RESIDUALS_DIR        = "./residuals_parquet"
+METRICS_DIR          = "./metrics_parquet"
+RECOMMENDATIONS_DIR  = "./recommendations_parquet"
+PREDICTIONS_GRID_DIR = "./predictions_grid_parquet"
 
 # ------------------------------------------------------------------
 # HELPERS
@@ -75,7 +77,7 @@ def main():
     db = client[DB_NAME]
 
     # ── 1. zone_aggregates ─────────────────────────────────────────
-    print("\n[1/3] Loading zone_aggregates …")
+    print("\n[1/4] Loading zone_aggregates …")
     feat = pd.read_parquet(FEATURES_DIR)
     feat = feat.rename(columns={"PULocationID": "zone_id"})
     # Aggregate per zone+hour across all dates for the heatmap baseline
@@ -105,7 +107,7 @@ def main():
     )
 
     # ── 2. predictions ─────────────────────────────────────────────
-    print("\n[2/3] Loading predictions …")
+    print("\n[2/4] Loading predictions …")
     res = pd.read_parquet(RESIDUALS_DIR)
     # Sample to keep MongoDB lean (keep up to 100k per model)
     res = (res.groupby("model", group_keys=False)
@@ -129,7 +131,7 @@ def main():
     print("   ↳ Inserted model_metrics (2 documents)")
 
     # ── 3. recommendations ─────────────────────────────────────────
-    print("\n[3/3] Loading recommendations …")
+    print("\n[3/4] Loading recommendations …")
     reco = pd.read_parquet(RECOMMENDATIONS_DIR)
     reco = reco.rename(columns={"pickup_hour": "hour_bucket"})
     reco["avg_revenue"]      = reco["avg_revenue"].round(2)
@@ -144,11 +146,30 @@ def main():
         ]
     )
 
+    # ── 4. predictions_grid ────────────────────────────────────────
+    print("\n[4/4] Loading predictions_grid …")
+    if os.path.isdir(PREDICTIONS_GRID_DIR):
+        pred = pd.read_parquet(PREDICTIONS_GRID_DIR)
+        pred["actual_fare"]    = pred["actual_fare"].round(2)
+        pred["predicted_fare"] = pred["predicted_fare"].round(2)
+        pred["pickup_date"]    = pred["pickup_date"].astype(str)
+
+        load_collection(
+            db, "predictions_grid", pred,
+            indexes=[
+                ([("zone_id", ASCENDING), ("pickup_date", ASCENDING), ("hour_bucket", ASCENDING)], False),
+                ([("zone_id", ASCENDING), ("pickup_dow", ASCENDING), ("pickup_month", ASCENDING), ("hour_bucket", ASCENDING)], False),
+            ]
+        )
+    else:
+        print(f"   ⚠  {PREDICTIONS_GRID_DIR} not found — skipping predictions_grid.")
+        print(f"      Run predict_grid.py on Dataproc and 'hdfs dfs -get' the output first.")
+
     # ── Summary ────────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("  ALL COLLECTIONS LOADED")
     print("=" * 60)
-    for name in ["zone_aggregates", "predictions", "model_metrics", "recommendations"]:
+    for name in ["zone_aggregates", "predictions", "model_metrics", "recommendations", "predictions_grid"]:
         n = db[name].count_documents({})
         print(f"  {name:<25}  {n:>10,} docs")
 
@@ -162,6 +183,11 @@ def main():
     t0 = time.time()
     list(db["recommendations"].find({"origin_zone": 161, "hour_bucket": 9}).sort("rank", 1).limit(5))
     print(f"  recommendations lookup (zone=161, hour=9): {(time.time()-t0)*1000:.1f} ms")
+
+    if db["predictions_grid"].count_documents({}) > 0:
+        t0 = time.time()
+        db["predictions_grid"].find_one({"zone_id": 161, "pickup_date": "2025-06-15", "hour_bucket": 9})
+        print(f"  predictions_grid lookup (zone=161, date=2025-06-15, hour=9): {(time.time()-t0)*1000:.1f} ms")
 
     client.close()
     print("\n✅ Done. MongoDB is ready for the dashboard.")

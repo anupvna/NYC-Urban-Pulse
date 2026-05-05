@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from pymongo import MongoClient
+from datetime import date
+import json
 import os
 
 # --- PAGE CONFIG ---
@@ -66,6 +67,67 @@ def get_zone_list():
     return [(row.zone_id, f"{row.zone_id}: {row.Zone} ({row.Borough})") for _, row in df.iterrows()]
 
 
+@st.cache_resource
+def load_geojson():
+    """Load NYC Taxi Zones GeoJSON if present in project root.
+    
+    Normalises the property key to 'LocationID' (int) so it matches
+    the zone_id column coming from MongoDB regardless of the original
+    casing or type in the downloaded file.
+    """
+    path = "./taxi_zones.geojson"
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            geo = json.load(f)
+        for feat in geo.get("features", []):
+            props = feat.get("properties", {})
+            lid = props.get("LocationID") or props.get("locationid") or props.get("LOCATIONID")
+            if lid is not None:
+                props["LocationID"] = int(lid)
+        return geo
+    return None
+
+
+@st.cache_data
+def get_gbt_residual_std():
+    """Std deviation of GBT test-set residuals — used for prediction confidence band."""
+    cursor = db.predictions.find({"model": "GBTRegressor"}, {"residual": 1, "_id": 0})
+    df = pd.DataFrame(list(cursor))
+    if df.empty:
+        return None
+    return float(df["residual"].std())
+
+
+# Spark dayofweek convention: Sun=1, Mon=2, ..., Sat=7
+PY_DOW_TO_SPARK = {0: 2, 1: 3, 2: 4, 3: 5, 4: 6, 5: 7, 6: 1}
+SPARK_DOW_NAMES = {1: "Sunday", 2: "Monday", 3: "Tuesday", 4: "Wednesday",
+                   5: "Thursday", 6: "Friday", 7: "Saturday"}
+
+
+@st.cache_data
+def get_exact_prediction(zone_id, pickup_date_str, hour_bucket):
+    """Look up a precomputed GBT prediction for a real 2025 (zone, date, hour)."""
+    return db.predictions_grid.find_one({
+        "zone_id": zone_id,
+        "pickup_date": pickup_date_str,
+        "hour_bucket": hour_bucket
+    })
+
+
+@st.cache_data
+def get_forecast_prediction(zone_id, spark_dow, month, hour_bucket):
+    """Forecast for a non-2025 date by averaging predictions for matching dow+month from 2025."""
+    cursor = db.predictions_grid.find(
+        {"zone_id": zone_id, "pickup_dow": spark_dow,
+         "pickup_month": month, "hour_bucket": hour_bucket},
+        {"predicted_fare": 1, "_id": 0}
+    )
+    preds = [d["predicted_fare"] for d in cursor]
+    if not preds:
+        return None, 0
+    return sum(preds) / len(preds), len(preds)
+
+
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.title("🚕 NYC Urban Pulse")
 st.sidebar.write("Explore taxi demand, fare predictions, and top destinations.")
@@ -91,32 +153,45 @@ if page == "1. Demand Heatmap":
             ["total_trips", "total_revenue", "avg_fare", "avg_distance"]
         )
 
-    # Load GeoJSON for NYC Taxi Zones (using a public URL for simplicity in Streamlit)
-    geojson_url = "https://raw.githubusercontent.com/martinjc/UK-GeoJSON/master/json/administrative/gb/lad.json" # Placeholder, we will use choropleth with built-in or simple scatter if geojson is not available
-    
     df_zones = get_zone_data(selected_hour)
-    
+
     if df_zones.empty:
         st.info("No data available for this hour.")
     else:
-        # Since we don't have the H3/GeoJSON shapefile locally in the Streamlit app easily, 
-        # we'll display a rich bar chart/scatter representing the zones instead, 
-        # or a dataframe view. If we had lat/lon we'd use px.scatter_mapbox.
-        # Let's show top zones by the selected metric for this hour.
-        st.subheader(f"Top Zones by {color_metric} at {selected_hour}:00")
-        
-        top_zones = df_zones.sort_values(by=color_metric, ascending=False).head(20)
-        
-        fig = px.bar(
-            top_zones, 
-            x="Zone", 
-            y=color_metric, 
-            color="Borough",
-            title=f"Top 20 Zones for {color_metric}",
-            labels={"Zone": "Taxi Zone", color_metric: color_metric.replace("_", " ").title()}
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
+        geojson = load_geojson()
+
+        if geojson is not None:
+            st.subheader(f"NYC Taxi Zones — {color_metric.replace('_', ' ').title()} at {selected_hour}:00")
+            fig = px.choropleth_mapbox(
+                df_zones,
+                geojson=geojson,
+                locations="zone_id",
+                featureidkey="properties.LocationID",
+                color=color_metric,
+                color_continuous_scale="Viridis",
+                mapbox_style="carto-positron",
+                zoom=9,
+                center={"lat": 40.7128, "lon": -74.0060},
+                opacity=0.7,
+                hover_name="Zone",
+                hover_data={"Borough": True, color_metric: ":.2f", "zone_id": False},
+            )
+            fig.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0}, height=600)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("💡 Place `taxi_zones.geojson` in the project root to enable the NYC choropleth map. Showing top-zones bar chart instead.")
+            st.subheader(f"Top Zones by {color_metric} at {selected_hour}:00")
+            top_zones = df_zones.sort_values(by=color_metric, ascending=False).head(20)
+            fig = px.bar(
+                top_zones,
+                x="Zone",
+                y=color_metric,
+                color="Borough",
+                title=f"Top 20 Zones for {color_metric}",
+                labels={"Zone": "Taxi Zone", color_metric: color_metric.replace("_", " ").title()}
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
         st.subheader("Raw Data (Aggregated)")
         st.dataframe(df_zones, use_container_width=True)
 
@@ -126,46 +201,91 @@ if page == "1. Demand Heatmap":
 # =====================================================================
 elif page == "2. Fare Predictor":
     st.title("💸 Fare Predictor")
-    st.markdown("Estimate the fare for a trip based on historical machine learning models.")
-    
-    zones = get_zone_data()
+    st.markdown("Predicted fares from the trained **Gradient Boosted Tree** model. "
+                "Pick a 2025 date to compare prediction vs actual; pick a 2026 date for forecast mode.")
+
     zone_list = get_zone_list()
-    
+
     if not zone_list:
         st.warning("No zone data available to make predictions.")
+    elif db.predictions_grid.count_documents({}) == 0:
+        st.warning("⚠️ `predictions_grid` collection is empty. Run `predict_grid.py` on the cluster, "
+                   "then `hdfs dfs -get` the output and re-run `mongo_loader.py`.")
     else:
         col1, col2, col3 = st.columns(3)
         with col1:
             origin = st.selectbox(
-                "Pickup Zone", 
+                "Pickup Zone",
                 options=[z[0] for z in zone_list],
                 format_func=lambda x: next(z[1] for z in zone_list if z[0] == x)
             )
         with col2:
-            hour = st.slider("Hour of Day", 0, 23, 12)
+            pickup_date = st.date_input(
+                "Pickup Date",
+                value=date(2025, 6, 15),
+                min_value=date(2025, 1, 1),
+                max_value=date(2026, 12, 31)
+            )
         with col3:
-            weather = st.selectbox("Weather Condition", ["Clear", "Rain", "Snow"]) # Mocked for UI if not in DB directly
-            
+            hour = st.slider("Hour of Day", 0, 23, 12)
+
         st.markdown("---")
-        
-        # We look up the average fare for this zone+hour from aggregates as a baseline prediction proxy
-        # since actual model inference requires Spark. Person 2 outputs predictions into DB or we use aggregates.
-        df_origin = get_zone_data(hour)
-        if not df_origin.empty:
-            zone_stats = df_origin[df_origin["zone_id"] == origin]
-            if not zone_stats.empty:
-                avg_f = zone_stats["avg_fare"].values[0]
-                total_t = zone_stats["total_trips"].values[0]
-                
-                # Add a simulated confidence band (+/- 15%)
-                lower_bound = avg_f * 0.85
-                upper_bound = avg_f * 1.15
-                
-                st.success(f"### Predicted Fare: ${avg_f:.2f}")
-                st.write(f"**Confidence Band:** ${lower_bound:.2f} — ${upper_bound:.2f}")
-                st.caption(f"Based on {total_t:,} historical trips from this zone at this hour.")
+
+        residual_std = get_gbt_residual_std() or 0.0
+        is_2025 = pickup_date.year == 2025
+
+        if is_2025:
+            doc = get_exact_prediction(origin, pickup_date.strftime("%Y-%m-%d"), hour)
+
+            if doc:
+                predicted = doc["predicted_fare"]
+                actual = doc["actual_fare"]
+                error = predicted - actual
+                lower = predicted - 1.96 * residual_std
+                upper = predicted + 1.96 * residual_std
+
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Predicted Fare (GBT)", f"${predicted:.2f}")
+                    st.caption(f"95% CI: ${lower:.2f} – ${upper:.2f}")
+                with c2:
+                    st.metric("Actual Fare (Historical)", f"${actual:.2f}")
+                with c3:
+                    err_pct = (abs(error) / actual * 100) if actual > 0 else 0
+                    st.metric("Prediction Error", f"${error:+.2f}", f"{err_pct:.1f}% off")
+
+                day_name = SPARK_DOW_NAMES.get(doc.get("pickup_dow"), "?")
+                weekend_str = "Weekend" if doc.get("is_weekend") else "Weekday"
+                holiday_str = "🎉 US Holiday" if doc.get("is_holiday") else "Regular day"
+                st.caption(f"📅 {day_name}, {pickup_date.strftime('%B %d, %Y')} • {weekend_str} • {holiday_str}")
             else:
-                st.info("Not enough historical data for this zone at this hour.")
+                st.info("No data for this combination of zone, date, and hour. "
+                        "Some (zone, hour) pairs had no trips on this specific date.")
+
+        else:
+            # 2026 — forecast mode
+            spark_dow = PY_DOW_TO_SPARK[pickup_date.weekday()]
+            predicted, n_samples = get_forecast_prediction(origin, spark_dow, pickup_date.month, hour)
+
+            if predicted is not None:
+                lower = predicted - 1.96 * residual_std
+                upper = predicted + 1.96 * residual_std
+
+                st.warning("⚠️ Forecast mode: 2026 has no actual data — projection based on 2025 patterns "
+                           "for the same weekday and month.")
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.metric("Forecast Fare", f"${predicted:.2f}")
+                    st.caption(f"95% CI: ${lower:.2f} – ${upper:.2f}")
+                with c2:
+                    st.metric("Based on", f"{n_samples} matching 2025 days")
+
+                day_name = SPARK_DOW_NAMES.get(spark_dow, "?")
+                st.caption(f"📅 {day_name}, {pickup_date.strftime('%B %d, %Y')} • "
+                           f"Same weekday + month as in training data")
+            else:
+                st.info("Not enough 2025 data with the same weekday + month to forecast this combination.")
                 
 
 # =====================================================================

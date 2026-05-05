@@ -69,12 +69,6 @@ zone_hour_features = taxi.groupBy(
     spark_sum("passenger_count").alias("total_passengers")
 )
 
-# Demand-to-supply ratio (trips per unique hour — higher means busier zone)
-zone_hour_features = zone_hour_features.withColumn(
-    "demand_supply_ratio",
-    col("total_trips") / lit(1)
-)
-
 # =============================================================
 # 4. SAVE FEATURE TABLE
 # =============================================================
